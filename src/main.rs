@@ -1,7 +1,4 @@
-use std::{
-    str::FromStr,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use clap_duration::duration_range_value_parse;
