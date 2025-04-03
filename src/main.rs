@@ -1,6 +1,10 @@
-use std::time::{Duration, Instant};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use clap_duration::duration_range_value_parse;
 use colored::Colorize;
 use duration_human::{DurationHuman, DurationHumanValidator};
@@ -26,9 +30,24 @@ struct Args {
     )]
     timeout: DurationHuman,
 
-    /// Urls to check the status on.
-    #[arg(trailing_var_arg = true, num_args = 1..)]
-    urls: Vec<String>,
+    /// Command to run.
+    #[command(subcommand)]
+    command: SubCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum SubCommand {
+    /// Get urls from command file.
+    FromFile {
+        /// File to get the urls from.
+        file_path: PathBuf,
+    },
+    /// Get urls from command line.
+    Urls {
+        /// Urls to check the status on.
+        #[arg(trailing_var_arg = true, num_args = 1..)]
+        urls: Vec<String>,
+    },
 }
 
 /// The result of a ping to a website.
@@ -44,6 +63,7 @@ struct PingResult {
     status: StatusCode,
 }
 
+/// Check status of a url.
 async fn check_status(
     url: &str,
     timeout: &Duration,
@@ -58,15 +78,25 @@ async fn check_status(
     Ok(PingResult { url: url.to_string(), elapsed, status })
 }
 
+/// Gets the urls specified in a command.
+fn get_urls(command: SubCommand) -> error::Result<Vec<String>> {
+    match command {
+        SubCommand::FromFile { file_path } => {
+            let contents = fs::read_to_string(file_path)?;
+            Ok(contents.lines().map(|line| line.trim().to_string()).collect())
+        }
+        SubCommand::Urls { urls } => Ok(urls),
+    }
+}
+
 #[tokio::main]
 async fn main() -> error::Result<()> {
     let args = Args::parse();
-
-    dbg!(&args);
-
     let timeout: Duration = (&args.timeout).into();
+    let urls = get_urls(args.command)?;
+
     let mut results = vec![];
-    for url in args.urls.iter() {
+    for url in urls.iter() {
         let status = check_status(url, &timeout).await?;
         results.push(status);
     }
