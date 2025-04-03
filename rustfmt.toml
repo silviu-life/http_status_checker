@@ -1,0 +1,4 @@
+max_width = 80
+use_small_heuristics = "Max"
+fn_params_layout = "Vertical"
+merge_derives = false
