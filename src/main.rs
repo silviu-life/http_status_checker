@@ -1,13 +1,16 @@
 use std::{
+    fmt::Debug,
     fs,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use clap::{Parser, Subcommand};
+use chrono::Utc;
+use clap::{ArgAction, Parser, Subcommand};
 use clap_duration::duration_range_value_parse;
 use colored::Colorize;
 use duration_human::{DurationHuman, DurationHumanValidator};
+use futures::future::try_join_all;
 use reqwest::StatusCode;
 use tokio;
 
@@ -18,7 +21,7 @@ mod error;
 #[command(version, about, long_about = None)]
 struct Args {
     /// Verbose mode for http interactions.
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, action = ArgAction::Set, default_value_t = false)]
     verbose: bool,
 
     /// Timeout for each request.
@@ -65,17 +68,46 @@ struct PingResult {
 
 /// Check status of a url.
 async fn check_status(
-    url: &str,
-    timeout: &Duration,
+    url: String,
+    timeout: Duration,
+    verbose: bool,
 ) -> error::Result<PingResult> {
     let client = reqwest::Client::new();
 
     let now = Instant::now();
-    let result = client.get(url).timeout(*timeout).send().await?;
+    if verbose {
+        println!(
+            "[{}] Starting request to {}.",
+            Utc::now().to_rfc3339().color("red"),
+            url.color("red")
+        );
+    }
+    let result = match client.get(&url).timeout(timeout).send().await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            if verbose {
+                print!(
+                    "[{}] Request to {} finished with error {}.",
+                    Utc::now().to_rfc3339().color("red"),
+                    url,
+                    e
+                );
+            }
+            Err(e)
+        }
+    }?;
     let elapsed = now.elapsed();
     let status = result.status();
+    if verbose {
+        println!(
+            "[{}] Request to {} finished with status {}.",
+            Utc::now().to_rfc3339().color("red"),
+            url.color("red"),
+            status.to_string().color("red")
+        );
+    }
 
-    Ok(PingResult { url: url.to_string(), elapsed, status })
+    Ok(PingResult { url, elapsed, status })
 }
 
 /// Gets the urls specified in a command.
@@ -92,14 +124,16 @@ fn get_urls(command: SubCommand) -> error::Result<Vec<String>> {
 #[tokio::main]
 async fn main() -> error::Result<()> {
     let args = Args::parse();
+    dbg!(&args);
     let timeout: Duration = (&args.timeout).into();
     let urls = get_urls(args.command)?;
 
-    let mut results = vec![];
-    for url in urls.iter() {
-        let status = check_status(url, &timeout).await?;
-        results.push(status);
-    }
+    let futures = urls
+        .into_iter()
+        .map(|url| check_status(url, timeout, args.verbose))
+        .collect::<Vec<_>>();
+
+    let results = try_join_all(futures).await?;
 
     for result in results {
         let duration_human = DurationHuman::from(result.elapsed);
